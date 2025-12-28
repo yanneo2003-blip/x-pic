@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>极简小红书封面生成器</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- html-to-image -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.11/html-to-image.min.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #FFFFFF;
+            --text-primary: #000000;
+            --text-secondary: #536471;
+            --border-color: #EFF3F4;
+            --app-bg: #F7F9F9;
+            --panel-bg: #FFFFFF;
+            --safe-area-bottom: env(safe-area-inset-bottom);
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans SC', sans-serif;
+            background-color: var(--app-bg);
+            color: var(--text-primary);
+            margin: 0;
+            overscroll-behavior-y: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        input, textarea {
+            font-size: 16px !important; 
+        }
+
+        .preview-text {
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .preview-scale-wrapper {
+            transform-origin: center center;
+            transition: transform 0.2s;
+            will-change: transform;
+        }
+
+        #capture-node {
+            width: 600px;
+            height: 800px;
+            background-color: var(--bg-color);
+            position: relative;
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);
+        }
+        
+        @media (max-width: 768px) {
+            .mobile-hidden { display: none !important; }
+            .mobile-flex { display: flex !important; }
+            .config-panel {
+                /* Add extra padding at bottom to avoid overlap with tab bar */
+                padding-bottom: calc(100px + var(--safe-area-bottom));
+            }
+        }
+    </style>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#000000',
+                        secondary: '#536471',
+                        border: '#EFF3F4',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+
+<div id="app" class="h-[100dvh] flex flex-col md:flex-row overflow-hidden relative">
+    
+    <!-- 1. CONFIGURATION PANEL -->
+    <div 
+        class="bg-[var(--panel-bg)] border-r border-gray-200 h-full overflow-y-auto z-10 shadow-lg flex-col config-panel transition-all duration-300 ease-in-out"
+        :class="[
+            'md:w-[450px] md:flex', 
+            activeTab === 'edit' ? 'w-full flex' : 'hidden'
+        ]"
+    >
+        <div class="p-5 md:p-6 border-b border-gray-100 sticky top-0 bg-white z-20 flex justify-between items-center shadow-sm">
+            <div>
+                <h1 class="text-xl font-bold tracking-tight">封面生成器</h1>
+                <p class="text-sm text-gray-500 mt-1">极简主义风格 (3:4)</p>
+            </div>
+            <span class="md:hidden text-xs bg-gray-100 text-gray-500 px-2 py-1 rounded">编辑模式</span>
+        </div>
+
+        <div class="p-5 md:p-6 space-y-6 flex-1">
+            <!-- Profile Info -->
+            <div class="space-y-4">
+                <h2 class="text-xs uppercase tracking-wider font-bold text-gray-400">用户信息</h2>
+                <div class="flex items-center gap-4">
+                    <div class="relative w-16 h-16 rounded-full overflow-hidden bg-gray-100 border border-gray-200 shrink-0 group">
+                        <img :src="user.avatar" class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            <span class="text-white text-xs">更换</span>
+                        </div>
+                        <input type="file" @change="handleImageUpload" accept="image/*" class="absolute inset-0 opacity-0 cursor-pointer z-10">
+                    </div>
+                    <div class="flex-1 space-y-2">
+                        <input v-model="user.name" class="w-full p-2.5 border border-gray-200 rounded-lg outline-none focus:border-black transition-colors" placeholder="用户昵称">
+                        <input v-model="user.handle" class="w-full p-2.5 border border-gray-200 rounded-lg outline-none focus:border-black transition-colors" placeholder="@用户ID">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div class="space-y-4">
+                <h2 class="text-xs uppercase tracking-wider font-bold text-gray-400">内容编辑</h2>
+                <div>
+                    <label class="block text-sm font-medium text-gray-500 mb-2">正文</label>
+                    <textarea v-model="content.text" rows="5" class="w-full p-2.5 border border-gray-200 rounded-lg outline-none focus:border-black transition-colors resize-none leading-relaxed" placeholder="输入内容..."></textarea>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-500 mb-2">发布时间</label>
+                    <div class="relative">
+                        <input v-model="content.time" type="text" class="w-full p-2.5 border border-gray-200 rounded-lg outline-none focus:border-black transition-colors" readonly>
+                        <button @click="updateTime" class="absolute right-0 top-0 h-full px-3 text-blue-600 text-sm font-medium">刷新</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="space-y-4">
+                <h2 class="text-xs uppercase tracking-wider font-bold text-gray-400">互动数据</h2>
+                <div class="grid grid-cols-3 gap-3">
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">评论</label>
+                        <input v-model="stats.comments" type="text" class="w-full p-2 border border-gray-200 rounded-lg text-center outline-none focus:border-black">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">转发</label>
+                        <input v-model="stats.reposts" type="text" class="w-full p-2 border border-gray-200 rounded-lg text-center outline-none focus:border-black">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 mb-1 block">点赞</label>
+                        <input v-model="stats.likes" type="text" class="w-full p-2 border border-gray-200 rounded-lg text-center outline-none focus:border-black">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Desktop Actions -->
+            <div class="hidden md:block pt-4 border-t border-gray-100">
+                <div class="flex gap-3">
+                    <button @click="exportImage('png')" :disabled="isExporting" class="flex-1 bg-black text-white h-12 rounded-lg font-medium hover:bg-gray-800 transition flex items-center justify-center gap-2">
+                        <span v-if="isExporting">...</span>
+                        <span v-else>下载 PNG</span>
+                    </button>
+                    <button @click="exportImage('svg')" :disabled="isExporting" class="flex-1 bg-white border border-gray-300 text-gray-700 h-12 rounded-lg font-medium hover:bg-gray-50 transition">
+                        下载 SVG
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. PREVIEW AREA -->
+    <div 
+        class="bg-[#E7E9EA] relative overflow-hidden flex flex-col items-center justify-center p-0 md:p-8 transition-all"
+        :class="[
+            'md:flex-1 md:flex', 
+            activeTab === 'preview' ? 'w-full flex h-full' : 'hidden'
+        ]"
+    >
+        <!-- Canvas Container -->
+        <div class="flex-1 w-full flex items-center justify-center relative overflow-hidden pb-24 md:pb-0"> <!-- Added padding-bottom for mobile -->
+            <div class="preview-scale-wrapper shadow-2xl" :style="{ transform: `scale(${scale})` }">
+                
+                <!-- THE CAPTURE NODE (600x800) -->
+                <div id="capture-node" class="flex flex-col p-[40px] box-border select-none">
+                    <!-- Header -->
+                    <header class="flex items-start justify-between mb-8">
+                        <div class="flex items-center gap-4">
+                            <div class="w-[64px] h-[64px] rounded-full overflow-hidden bg-gray-100 shrink-0">
+                                <img :src="user.avatar" class="w-full h-full object-cover block">
+                            </div>
+                            <div class="flex flex-col">
+                                <span class="text-[20px] font-bold text-[var(--text-primary)] leading-tight mb-0.5">{{ user.name }}</span>
+                                <span class="text-[16px] text-[var(--text-secondary)]">{{ user.handle }}</span>
+                            </div>
+                        </div>
+                        <div class="bg-black text-white px-6 py-2 rounded-full font-bold text-[15px]">关注</div>
+                    </header>
+
+                    <!-- Body -->
+                    <main class="flex-1 flex flex-col justify-center">
+                        <div class="preview-text text-[28px] text-[var(--text-primary)] font-normal tracking-tight">{{ content.text }}</div>
+                    </main>
+
+                    <!-- Footer -->
+                    <footer class="mt-auto pt-8">
+                        <div class="text-[16px] text-[var(--text-secondary)] mb-4 font-normal">{{ content.time }}</div>
+                        <div class="h-[1px] bg-[var(--border-color)] w-full mb-4"></div>
+                        <div class="flex items-center gap-10">
+                            <!-- Comment Icon -->
+                            <div class="flex items-center gap-2">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#536471" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                                <span class="text-[16px] text-[var(--text-secondary)] font-medium">{{ stats.comments }}</span>
+                            </div>
+                            <!-- Repost Icon -->
+                            <div class="flex items-center gap-2">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#536471" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 23l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+                                <span class="text-[16px] text-[var(--text-secondary)] font-medium">{{ stats.reposts }}</span>
+                            </div>
+                            <!-- Like Icon -->
+                            <div class="flex items-center gap-2">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#536471" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                                <span class="text-[16px] text-[var(--text-secondary)] font-medium">{{ stats.likes }}</span>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Mobile Floating Download Button (Fixed above tab bar) -->
+        <!-- Only visible in preview tab on mobile -->
+        <div class="md:hidden fixed bottom-24 left-1/2 -translate-x-1/2 w-[90%] max-w-[400px] z-40 transition-all duration-300"
+             :class="activeTab === 'preview' ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0 pointer-events-none'">
+            <button @click="exportImage('png')" :disabled="isExporting" class="w-full bg-black text-white h-12 rounded-full font-medium flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-transform border border-gray-800">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <span v-if="isExporting">生成中...</span>
+                <span v-else>保存高清封面</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 3. MOBILE TAB BAR (Only on Mobile) -->
+    <div class="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md shadow-xl border border-gray-200 rounded-full p-1.5 flex gap-1 z-50 safe-pb">
+        <button 
+            @click="switchTab('edit')"
+            class="px-6 py-2.5 rounded-full text-sm font-bold transition-all min-w-[80px]"
+            :class="activeTab === 'edit' ? 'bg-black text-white' : 'text-gray-500 hover:bg-gray-100'"
+        >
+            编辑
+        </button>
+        <button 
+            @click="switchTab('preview')"
+            class="px-6 py-2.5 rounded-full text-sm font-bold transition-all min-w-[80px]"
+            :class="activeTab === 'preview' ? 'bg-black text-white' : 'text-gray-500 hover:bg-gray-100'"
+        >
+            预览
+        </button>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, onMounted, nextTick } = Vue;
+
+    createApp({
+        setup() {
+            const activeTab = ref('edit');
+            const user = ref({
+                name: '设计日记',
+                handle: '@DesignDaily',
+                avatar: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMDAwIiBzdHJva2Utd2lkdGg9IjEiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIiBmaWxsPSIjZjNmNGY2Ii8+PHBhdGggZD0iTTEyIDEyYTUgNSAwIDEgMCAwLTEwIDUgNSAwIDAgMCAwIDEwem0wIDJjLTMuMzMgMC0xMCAxLjY3LTEwIDV2M2gyMHYtM2MwLTMuMzMtNi42Ny01LTEwLTV6IiBmaWxsPSIjZDJkN2RiIiBzdHJva2U9Im5vbmUiLz48L3N2Zz4='
+            });
+            const content = ref({
+                text: '极简主义不是要你一无所有，而是要你穿越物质的海洋，找到真正重要的东西。\n\n设计亦是如此，剥离多余的装饰，让信息本身发光。保持呼吸感，让视觉流动。',
+                time: ''
+            });
+            const stats = ref({
+                comments: '100w+',
+                reposts: '100w+',
+                likes: '100w+'
+            });
+            const isExporting = ref(false);
+            const scale = ref(1);
+
+            const updateTime = () => {
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                content.value.time = `${timeStr} · ${dateStr}`;
+            };
+
+            const calculateScale = () => {
+                const isMobile = window.innerWidth < 768;
+                let containerW = window.innerWidth - 450; 
+                let containerH = window.innerHeight;
+                
+                if (isMobile) {
+                    containerW = window.innerWidth;
+                    // Leave space for bottom button and tab bar
+                    containerH = window.innerHeight - 160; 
+                }
+                
+                const padding = isMobile ? 30 : 80;
+                const availW = containerW - padding;
+                const availH = containerH - padding;
+                
+                const scaleW = availW / 600;
+                const scaleH = availH / 800;
+                
+                scale.value = Math.min(Math.min(scaleW, scaleH), 1);
+            };
+
+            const switchTab = (tab) => {
+                activeTab.value = tab;
+                if (tab === 'preview') {
+                    nextTick(() => {
+                        calculateScale();
+                    });
+                }
+            };
+
+            const handleImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => user.value.avatar = e.target.result;
+                reader.readAsDataURL(file);
+            };
+
+            const exportImage = async (format) => {
+                const node = document.getElementById('capture-node');
+                if (!node) return;
+                isExporting.value = true;
+                
+                try {
+                    await new Promise(r => setTimeout(r, 50));
+
+                    const options = {
+                        quality: 1,
+                        pixelRatio: 2,
+                        backgroundColor: '#FFFFFF',
+                    };
+
+                    let dataUrl;
+                    const filename = `cover_${Date.now()}`;
+
+                    if (format === 'png') {
+                        dataUrl = await htmlToImage.toPng(node, options);
+                        downloadFile(dataUrl, `${filename}.png`);
+                    } else if (format === 'svg') {
+                        dataUrl = await htmlToImage.toSvg(node, options);
+                        downloadFile(dataUrl, `${filename}.svg`);
+                    }
+                } catch (error) {
+                    console.error(error);
+                    alert('导出失败，请重试');
+                } finally {
+                    isExporting.value = false;
+                }
+            };
+
+            const downloadFile = (uri, name) => {
+                const link = document.createElement('a');
+                link.download = name;
+                link.href = uri;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            onMounted(() => {
+                updateTime();
+                calculateScale();
+                window.addEventListener('resize', calculateScale);
+            });
+
+            return {
+                activeTab,
+                switchTab,
+                user,
+                content,
+                stats,
+                isExporting,
+                scale,
+                updateTime,
+                handleImageUpload,
+                exportImage
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
+
+
